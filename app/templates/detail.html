@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title }} · ReelPeek{% endblock %}
+{% block content %}
+<a class="back" href="/">← Zur Übersicht</a>
+<article class="detail-layout">
+  <section class="viewer panel">
+    {% if item.media %}
+      {% for medium in item.media %}
+        {% if medium.kind == 'video' %}
+          <video controls playsinline preload="metadata">
+            <source src="{{ medium.url }}" type="{{ medium.mime }}">
+          </video>
+        {% else %}
+          <img src="{{ medium.url }}" alt="Bild aus dem Instagram-Beitrag">
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="unavailable">
+        <div class="hero-icon">↻</div>
+        <h2>Medium nicht im Cache</h2>
+        <p class="muted">Es wurde entfernt oder konnte nicht anonym abgerufen werden.</p>
+        <form method="post" action="/items/{{ item.id }}/refresh">
+          <button class="primary">Erneut abrufen</button>
+        </form>
+      </div>
+    {% endif %}
+    <div class="caption-block">
+      <h2>Beschreibung des Beitrags</h2>
+      {% if item.description %}
+        <p class="description">{{ item.description }}</p>
+      {% else %}
+        <p class="muted">Zu diesem Beitrag ist keine Beschreibung verfügbar.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <aside class="panel metadata">
+    <p class="eyebrow">{{ item.uploader or 'Instagram' }}</p>
+    <h1>{{ item.title }}</h1>
+    {% if error or item.error %}<div class="alert">{{ error or item.error }}</div>{% endif %}
+    <div class="actions">
+      <form method="post" action="/items/{{ item.id }}/favorite">
+        <button class="secondary">{% if item.favorite %}★ Aus Favoriten{% else %}☆ Favorisieren{% endif %}</button>
+      </form>
+      <a class="secondary button" href="{{ item.source_url }}" target="_blank" rel="noopener noreferrer">Original öffnen</a>
+      <form method="post" action="/items/{{ item.id }}/delete">
+        <button class="danger" type="submit">Löschen</button>
+      </form>
+    </div>
+  </aside>
+</article>
+{% endblock %}

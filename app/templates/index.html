@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="intro">
+  <p class="eyebrow">Deine private Link-Inbox</p>
+  <h1>Link rein. Reel ansehen. Fertig.</h1>
+  <p class="muted">Nur öffentlich erreichbare Reels und Beiträge – ohne Werbung, Tracking oder Instagram-Konto.</p>
+</section>
+
+<section class="panel add-panel">
+  <form method="post" action="/items" class="add-form">
+    <label class="sr-only" for="url">Instagram-Link</label>
+    <input id="url" name="url" type="url" inputmode="url" placeholder="https://www.instagram.com/reel/…" required>
+    <button class="primary" type="submit">Hinzufügen</button>
+  </form>
+  <p class="hint">Der erste Abruf kann einige Sekunden dauern.</p>
+  {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+</section>
+
+<nav class="tabs" aria-label="Filter">
+  <a class="{% if view == 'all' %}active{% endif %}" href="/?view=all">Alle</a>
+  <a class="{% if view == 'inbox' %}active{% endif %}" href="/?view=inbox">Inbox</a>
+  <a class="{% if view == 'history' %}active{% endif %}" href="/?view=history">Verlauf</a>
+  <a class="{% if view == 'favorites' %}active{% endif %}" href="/?view=favorites">Favoriten</a>
+</nav>
+
+{% if items %}
+<section class="grid">
+  {% for item in items %}
+  <a class="card" href="/items/{{ item.id }}">
+    <div class="thumb">
+      {% if item.thumbnail_path %}
+        <img src="{{ item.thumbnail_path }}" alt="" loading="lazy">
+      {% else %}
+        <span class="placeholder">▶</span>
+      {% endif %}
+      {% if item.favorite %}<span class="badge favorite">★</span>{% endif %}
+      {% if not item.seen %}<span class="badge unseen">Neu</span>{% endif %}
+      {% if item.download_state != 'ready' %}<span class="badge state">{{ item.download_state }}</span>{% endif %}
+    </div>
+    <div class="card-body">
+      <h2>{{ item.title }}</h2>
+      <p>{{ item.uploader or 'Instagram' }} · {{ item.created_at[:10] }}</p>
+    </div>
+  </a>
+  {% endfor %}
+</section>
+{% else %}
+<section class="empty panel">
+  <div class="hero-icon">↗</div>
+  <h2>Noch nichts hier</h2>
+  <p class="muted">Füge oben den ersten Link ein, den du geschickt bekommen hast.</p>
+</section>
+{% endif %}
+{% endblock %}
