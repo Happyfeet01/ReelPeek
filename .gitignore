@@ -1,0 +1,8 @@
+.env
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Temporary source backups from migration patches
+*.bak

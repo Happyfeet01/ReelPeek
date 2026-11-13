@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Anmelden · ReelPeek{% endblock %}
+{% block content %}
+<section class="login-panel panel">
+  <div class="hero-icon">▶</div>
+  <h1>ReelPeek</h1>
+  <p class="muted">Öffentliche Instagram-Beiträge ansehen – ohne Instagram-Konto.</p>
+  {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <label for="password">Passwort</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    <button class="primary" type="submit">Anmelden</button>
+  </form>
+</section>
+{% endblock %}
