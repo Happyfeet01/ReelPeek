@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import logging
 import os
+import secrets
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,9 +28,32 @@ RETENTION_DAYS = max(1, int(os.getenv("RETENTION_DAYS", "14")))
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() in {"1", "true", "yes"}
 
 database = Database(DATA_ROOT / "reelpeek.sqlite3")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 (DATA_ROOT / "media").mkdir(parents=True, exist_ok=True)
 (DATA_ROOT / "thumbnails").mkdir(parents=True, exist_ok=True)
+
+
+def get_csrf_token(request: Request) -> str:
+    token = request.session.get("csrf_token")
+    if not token:
+        token = secrets.token_hex(32)
+        request.session["csrf_token"] = token
+    return token
+
+
+def csrf_context(request: Request) -> dict:
+    return {"csrf_token": get_csrf_token(request)}
+
+
+templates = Jinja2Templates(
+    directory=str(BASE_DIR / "templates"),
+    context_processors=[csrf_context],
+)
+
+
+def check_csrf(request: Request, token: str) -> None:
+    expected = request.session.get("csrf_token", "")
+    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(status_code=403, detail="Ungültiges CSRF-Token.")
 
 
 def cleanup_cache() -> int:
@@ -90,7 +114,7 @@ app.add_middleware(
     secret_key=SESSION_SECRET,
     https_only=COOKIE_SECURE,
     same_site="lax",
-    max_age=60 * 60 * 24 * 30,
+    max_age=60 * 60 * 24 * 7,
 )
 
 
@@ -115,7 +139,8 @@ def login_page(request: Request):
 
 
 @app.post("/login", response_class=HTMLResponse)
-def login(request: Request, password: str = Form(...)):
+def login(request: Request, csrf_token: str = Form(""), password: str = Form(...)):
+    check_csrf(request, csrf_token)
     if hmac.compare_digest(password.encode(), PASSWORD.encode()):
         request.session.clear()
         request.session["authenticated"] = True
@@ -129,7 +154,8 @@ def login(request: Request, password: str = Form(...)):
 
 
 @app.post("/logout")
-def logout(request: Request):
+def logout(request: Request, csrf_token: str = Form("")):
+    check_csrf(request, csrf_token)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -141,7 +167,8 @@ def index(request: Request, view: str = "all"):
 
 
 @app.post("/items", response_class=HTMLResponse)
-def add_item(request: Request, url: str = Form(...)):
+def add_item(request: Request, csrf_token: str = Form(""), url: str = Form(...)):
+    check_csrf(request, csrf_token)
     try:
         source_url = canonicalize_instagram_url(url)
     except ValueError as error:
@@ -182,7 +209,8 @@ def detail(request: Request, item_id: str):
 
 
 @app.post("/items/{item_id}/refresh")
-def refresh_item(item_id: str):
+def refresh_item(request: Request, item_id: str, csrf_token: str = Form("")):
+    check_csrf(request, csrf_token)
     item = database.get(item_id)
     if not item:
         raise HTTPException(status_code=404)
@@ -196,7 +224,8 @@ def refresh_item(item_id: str):
 
 
 @app.post("/items/{item_id}/favorite")
-def favorite(item_id: str):
+def favorite(request: Request, item_id: str, csrf_token: str = Form("")):
+    check_csrf(request, csrf_token)
     if not database.get(item_id):
         raise HTTPException(status_code=404)
     database.toggle_favorite(item_id)
@@ -204,7 +233,8 @@ def favorite(item_id: str):
 
 
 @app.post("/items/{item_id}/delete")
-def delete(item_id: str):
+def delete(request: Request, item_id: str, csrf_token: str = Form("")):
+    check_csrf(request, csrf_token)
     if not database.get(item_id):
         raise HTTPException(status_code=404)
     database.delete(item_id)

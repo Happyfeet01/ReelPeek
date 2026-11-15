@@ -7,6 +7,7 @@
   <p class="muted">Öffentliche Instagram-Beiträge ansehen – ohne Instagram-Konto.</p>
   {% if error %}<div class="alert">{{ error }}</div>{% endif %}
   <form method="post" action="/login" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="password">Passwort</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
     <button class="primary" type="submit">Anmelden</button>

@@ -8,6 +8,7 @@
 
 <section class="panel add-panel">
   <form method="post" action="/items" class="add-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label class="sr-only" for="url">Instagram-Link</label>
     <input id="url" name="url" type="url" inputmode="url" placeholder="https://www.instagram.com/reel/…" required>
     <button class="primary" type="submit">Hinzufügen</button>

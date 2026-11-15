@@ -20,6 +20,7 @@
         <h2>Medium nicht im Cache</h2>
         <p class="muted">Es wurde entfernt oder konnte nicht anonym abgerufen werden.</p>
         <form method="post" action="/items/{{ item.id }}/refresh">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="primary">Erneut abrufen</button>
         </form>
       </div>
@@ -40,10 +41,12 @@
     {% if error or item.error %}<div class="alert">{{ error or item.error }}</div>{% endif %}
     <div class="actions">
       <form method="post" action="/items/{{ item.id }}/favorite">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="secondary">{% if item.favorite %}★ Aus Favoriten{% else %}☆ Favorisieren{% endif %}</button>
       </form>
       <a class="secondary button" href="{{ item.source_url }}" target="_blank" rel="noopener noreferrer">Original öffnen</a>
       <form method="post" action="/items/{{ item.id }}/delete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="danger" type="submit">Löschen</button>
       </form>
     </div>
