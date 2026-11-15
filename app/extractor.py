@@ -15,6 +15,7 @@ MEDIA_EXTENSIONS = {
 }
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+COMMENT_LIMIT = 50
 
 
 class ExtractionError(RuntimeError):
@@ -77,6 +78,83 @@ def _description(data: dict) -> str:
                         return found
     return ""
 
+
+
+def _comment_text(entry: dict) -> str:
+    for key in ("text", "content", "message"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _comment_author(entry: dict) -> str:
+    for key in ("author", "username", "owner", "user"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            for sub in ("username", "unique_id", "nickname", "name"):
+                if isinstance(value.get(sub), str) and value[sub].strip():
+                    return value[sub].strip()
+    return ""
+
+
+def _comment_date(entry: dict) -> str:
+    for key in ("created_at", "timestamp", "created_time"):
+        value = entry.get(key)
+        if isinstance(value, (int, float)) and value > 1_000_000_000:
+            return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec="seconds")
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:19]
+    return ""
+
+
+def _collect_comments(value: object, found: list, depth: int) -> None:
+    if depth > 8 or len(found) >= 200:
+        return
+    if isinstance(value, list):
+        for entry in value:
+            _collect_comments(entry, found, depth + 1)
+        return
+    if not isinstance(value, dict):
+        return
+    if _comment_text(value) and _comment_author(value):
+        found.append(value)
+        return
+    for key in ("comments", "preview_comments", "edge_media_to_comment",
+                "edge_media_to_parent_comment", "edge_media_preview_comment"):
+        if key in value:
+            nested = value[key]
+            if isinstance(nested, dict):
+                nested = nested.get("edges") or nested.get("nodes") or []
+            _collect_comments(nested, found, depth + 1)
+
+
+def _comments(data: dict) -> list[dict]:
+    """Best-effort comment extraction from downloader metadata.
+
+    gallery-dl and yt-dlp do not fetch Instagram comments on their own.
+    When the metadata happens to contain them (for example preview_comments
+    from an authenticated gallery-dl API response), they are surfaced here.
+    """
+    found: list = []
+    _collect_comments(data, found, depth=0)
+    comments: list[dict] = []
+    seen: set[str] = set()
+    for raw in found:
+        text = _comment_text(raw)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        comments.append({
+            "author": _comment_author(raw)[:100],
+            "text": text[:1000],
+            "created_at": _comment_date(raw),
+        })
+        if len(comments) >= COMMENT_LIMIT:
+            break
+    return comments
 
 def _read_metadata(directory: Path) -> dict:
     """Prefer a metadata JSON with a caption over an unrelated media sidecar."""
@@ -348,4 +426,5 @@ def extract(url: str, item_id: str, data_root: Path) -> dict:
         "thumbnail_path": f"/thumbnails/{item_id}.jpg" if thumbnail_target.exists() else None,
         "media": media,
         "media_kind": media_kind,
+        "comments": _comments(metadata),
     }

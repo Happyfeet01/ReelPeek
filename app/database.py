@@ -48,6 +48,7 @@ class Database:
                     thumbnail_path TEXT,
                     media_json TEXT NOT NULL DEFAULT '[]',
                     media_kind TEXT NOT NULL DEFAULT 'video',
+                    comments_json TEXT NOT NULL DEFAULT '[]',
                     seen INTEGER NOT NULL DEFAULT 0,
                     favorite INTEGER NOT NULL DEFAULT 0,
                     download_state TEXT NOT NULL DEFAULT 'pending',
@@ -68,6 +69,10 @@ class Database:
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(items)")}
             if "downloaded_at" not in columns:
                 connection.execute("ALTER TABLE items ADD COLUMN downloaded_at TEXT")
+            if "comments_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE items ADD COLUMN comments_json TEXT NOT NULL DEFAULT '[]'"
+                )
             connection.execute("""
                 UPDATE items SET downloaded_at = created_at
                 WHERE downloaded_at IS NULL AND download_state IN ('ready', 'expired')
@@ -83,6 +88,7 @@ class Database:
             return None
         item = dict(row)
         item["media"] = json.loads(item.pop("media_json") or "[]")
+        item["comments"] = json.loads(item.pop("comments_json", None) or "[]")
         item["seen"] = bool(item["seen"])
         item["favorite"] = bool(item["favorite"])
         return item
@@ -139,13 +145,15 @@ class Database:
         thumbnail_path: str | None,
         media: list[dict],
         media_kind: str,
+        comments: list[dict] | None = None,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE items
                 SET title = ?, description = ?, uploader = ?, thumbnail_path = ?,
-                    media_json = ?, media_kind = ?, download_state = 'ready',
+                    media_json = ?, media_kind = ?, comments_json = ?,
+                    download_state = 'ready',
                     error = NULL, updated_at = ?, downloaded_at = ?
                 WHERE id = ?
                 """,
@@ -156,6 +164,7 @@ class Database:
                     thumbnail_path,
                     json.dumps(media, ensure_ascii=False),
                     media_kind,
+                    json.dumps((comments or [])[:50], ensure_ascii=False),
                     utc_now(),
                     utc_now(),
                     item_id,

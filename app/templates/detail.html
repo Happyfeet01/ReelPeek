@@ -33,6 +33,22 @@
         <p class="muted">Zu diesem Beitrag ist keine Beschreibung verfügbar.</p>
       {% endif %}
     </div>
+    {% if item.comments %}
+    <div class="comments-block">
+      <h2>Kommentare ({{ item.comments|length }})</h2>
+      <ul class="comments">
+        {% for comment in item.comments %}
+        <li class="comment">
+          <div class="comment-head">
+            <span class="comment-author">{{ comment.author or 'Instagram' }}</span>
+            {% if comment.created_at %}<span class="comment-date">{{ comment.created_at[:10] }}</span>{% endif %}
+          </div>
+          <p class="comment-text">{{ comment.text }}</p>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
   </section>
 
   <aside class="panel metadata">
