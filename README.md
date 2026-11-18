@@ -8,9 +8,10 @@ ReelPeek ist eine kleine private Web-App, die öffentlich erreichbare Instagram-
 - Videos, Bilder und Carousels im eigenen Browser ansehen
 - Inbox, Verlauf und Favoriten
 - Passwortgeschützter Zugriff
-- `gallery-dl` mit `yt-dlp` als Fallback
+- `yt-dlp` und `gallery-dl` (jeweils mit URL-Variante `/reel/` ↔ `/p/`), als letzter anonymer Fallback direkter Abruf der servergerenderten Embed-Seite (`/embed/captioned/`)
 - SQLite ohne externen Datenbankserver
 - Instagram-Beschreibung direkt unter den Videos (sofern die öffentlich gelieferten Metadaten sie enthalten)
+- Kommentare (max. 50) über `yt-dlp --write-comments` bzw. die Embed-Seite, soweit Instagram sie anonym ausliefert
 - Automatische Bereinigung aller nicht favorisierten Videos, Bilder und Vorschaubilder nach standardmäßig 14 Tagen, auch ohne Seitenaufrufe
 - Favorisierte Medien bleiben erhalten; URL, Beschreibung und Verlauf bleiben nach einer Bereinigung bestehen
 - Docker Compose und fertige Nginx-Reverse-Proxy-Konfiguration

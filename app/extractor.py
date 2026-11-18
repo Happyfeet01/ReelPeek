@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
+from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -16,6 +22,17 @@ MEDIA_EXTENSIONS = {
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 COMMENT_LIMIT = 50
+POST_KINDS = {"reel", "reels", "p", "tv"}
+SHORTCODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,20}$")
+CDN_HOST_SUFFIXES = (".instagram.com", ".cdninstagram.com", ".fbcdn.net")
+EMBED_HOST = "https://www.instagram.com"
+EMBED_TIMEOUT = 15
+EMBED_MAX_BYTES = 512 * 1024 * 1024
+EMBED_HTML_MAX_BYTES = 8 * 1024 * 1024
+EMBED_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 class ExtractionError(RuntimeError):
@@ -134,9 +151,9 @@ def _collect_comments(value: object, found: list, depth: int) -> None:
 def _comments(data: dict) -> list[dict]:
     """Best-effort comment extraction from downloader metadata.
 
-    gallery-dl and yt-dlp do not fetch Instagram comments on their own.
-    When the metadata happens to contain them (for example preview_comments
-    from an authenticated gallery-dl API response), they are surfaced here.
+    yt-dlp is run with --write-comments, so its info JSON carries the
+    public comments Instagram exposes to anonymous requests; the embed
+    fallback contributes preview comments found in the embed page.
     """
     found: list = []
     _collect_comments(data, found, depth=0)
@@ -215,17 +232,32 @@ def _fetch_media(url: str, directory: Path) -> tuple[dict, list[str]]:
     import time
     logger = logging.getLogger("uvicorn.error")
     is_reel = urlsplit(url).path.startswith(("/reel/", "/reels/", "/tv/"))
-    engines = [("yt-dlp", _run_ytdlp), ("gallery-dl", _run_gallery_dl)]
+    engines: list[tuple[str, Callable[[str, Path], dict]]] = [
+        ("yt-dlp", _run_ytdlp), ("gallery-dl", _run_gallery_dl),
+    ]
     if not is_reel:
         engines.reverse()
+    (primary_label, primary), (secondary_label, secondary) = engines
+    attempts: list[tuple[str, str, Callable[[str, Path], dict]]] = [
+        (primary_label, url, primary),
+        (secondary_label, url, secondary),
+    ]
+    # The same shortcode is served under /reel/, /reels/, /p/ and /tv/; the
+    # downloaders sometimes succeed on a different path variant.
+    variant = _variant_url(url)
+    if variant:
+        attempts.append((f"{primary_label} [{variant}]", variant, primary))
+    # Last resort: the server-rendered embed page still exposes the media of
+    # many public posts to anonymous requests.
+    attempts.append(("embed", url, _run_embed))
     errors = []
-    for label, engine in engines:
+    for label, attempt_url, engine in attempts:
         started = time.monotonic()
         # Never publish files left by a failed/partial download attempt.
         with tempfile.TemporaryDirectory(prefix="attempt-", dir=directory) as work:
             attempt = Path(work)
             try:
-                metadata = engine(url, attempt)
+                metadata = engine(attempt_url, attempt)
                 if not _media_files(attempt):
                     raise ExtractionError(f"{label}: Keine Medien erhalten.")
             except ExtractionError as error:
@@ -255,11 +287,236 @@ def _run_ytdlp(url: str, directory: Path) -> dict:
         "--no-progress", "--socket-timeout", "10", "--retries", "0",
         "--extractor-retries", "0", "--fragment-retries", "0",
         "--abort-on-unavailable-fragments", "--write-info-json",
+        "--write-comments",
         "--no-write-playlist-metafiles",
         "--format", "best[vcodec^=avc1]/best[vcodec=h264]/best",
         "--output", str(directory / "%(autonumber)03d_%(id)s.%(ext)s"),
         "--", url,
     ], directory, "yt-dlp")
+
+
+def _post_parts(url: str) -> tuple[str, str] | None:
+    segments = [part for part in urlsplit(url).path.split("/") if part]
+    if (len(segments) >= 2 and segments[0] in POST_KINDS
+            and SHORTCODE_RE.match(segments[1])):
+        return segments[0], segments[1]
+    return None
+
+
+def _variant_url(url: str) -> str | None:
+    found = _post_parts(url)
+    if not found:
+        return None
+    kind, shortcode = found
+    alternate = "p" if kind != "p" else "reel"
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{alternate}/{shortcode}/", "", ""))
+
+
+def _is_instagram_cdn(value: str) -> bool:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not host:
+        return False
+    return any(host == suffix.lstrip(".") or host.endswith(suffix)
+               for suffix in CDN_HOST_SUFFIXES)
+
+
+def _meta_content(html_text: str, prop: str) -> str:
+    patterns = (
+        r'<meta[^>]*property=["\']' + re.escape(prop) + r'["\'][^>]*content=["\']([^"\']*)["\']',
+        r'<meta[^>]*content=["\']([^"\']*)["\'][^>]*property=["\']' + re.escape(prop) + r'["\']',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, html_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            return unescape(match.group(1)).strip()
+    return ""
+
+
+def _json_string(html_text: str, key: str) -> str:
+    match = re.search(r'"' + re.escape(key) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', html_text)
+    if not match:
+        return ""
+    try:
+        return json.loads('"' + match.group(1) + '"')
+    except json.JSONDecodeError:
+        return ""
+
+
+def _parse_embed(html_text: str, shortcode: str, page_url: str) -> tuple[dict, str, str]:
+    """Extract metadata and the direct media URL from an Instagram embed page."""
+    metadata = {
+        "id": shortcode,
+        "webpage_url": page_url,
+        "title": _meta_content(html_text, "og:title"),
+        "description": _meta_content(html_text, "og:description"),
+        "uploader": _json_string(html_text, "username"),
+    }
+    for key in ("playable_url_quality_hd", "playable_url", "video_url"):
+        value = _json_string(html_text, key)
+        if value and _is_instagram_cdn(value):
+            return metadata, value, "video"
+    for prop in ("og:video:secure_url", "og:video:url", "og:video"):
+        value = _meta_content(html_text, prop)
+        if value and _is_instagram_cdn(value):
+            return metadata, value, "video"
+    for key in ("display_url", "display_src"):
+        value = _json_string(html_text, key)
+        if value and _is_instagram_cdn(value):
+            return metadata, value, "image"
+    value = _meta_content(html_text, "og:image")
+    if value and _is_instagram_cdn(value):
+        return metadata, value, "image"
+    return metadata, "", ""
+
+
+class _LoginRedirect(Exception):
+    pass
+
+
+class _LoginRedirectHandler(urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if "accounts/login" in newurl:
+            raise _LoginRedirect(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _http_get(url: str) -> tuple[bytes, str]:
+    req = urlrequest.Request(url, headers={
+        "User-Agent": EMBED_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    })
+    opener = urlrequest.build_opener(_LoginRedirectHandler)
+    with opener.open(req, timeout=EMBED_TIMEOUT) as response:
+        final_url = response.geturl()
+        if "accounts/login" in final_url:
+            raise _LoginRedirect(final_url)
+        data = response.read(EMBED_HTML_MAX_BYTES + 1)
+    if len(data) > EMBED_HTML_MAX_BYTES:
+        raise ExtractionError("embed: HTML-Antwort zu gro\u00df.")
+    return data, final_url
+
+
+def _http_download(url: str, target: Path) -> Path:
+    req = urlrequest.Request(url, headers={
+        "User-Agent": EMBED_USER_AGENT, "Accept": "*/*",
+    })
+    with urlrequest.build_opener().open(req, timeout=EMBED_TIMEOUT) as response:
+        content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        suffix = Path(urlsplit(url).path).suffix.lower()
+        if suffix not in MEDIA_EXTENSIONS:
+            guessed = mimetypes.guess_extension(content_type) or ""
+            if guessed in MEDIA_EXTENSIONS:
+                suffix = guessed
+            elif content_type.startswith("video/"):
+                suffix = ".mp4"
+            elif content_type.startswith("image/"):
+                suffix = ".jpg"
+            else:
+                raise ExtractionError("embed: Unbekannter Medientyp der Datei.")
+        target = target.with_suffix(suffix)
+        total = 0
+        with target.open("wb") as handle:
+            while True:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > EMBED_MAX_BYTES:
+                    raise ExtractionError("embed: Mediendatei \u00fcberschreitet das Größenlimit.")
+                handle.write(chunk)
+    if total == 0:
+        target.unlink(missing_ok=True)
+        raise ExtractionError("embed: Mediendatei ist leer.")
+    return target
+
+
+def _json_value(html_text: str, key: str) -> object:
+    """Parse the JSON object/array stored under "key" in an HTML-embedded blob."""
+    match = re.search(r'"' + re.escape(key) + r'"\s*:\s*', html_text)
+    if not match:
+        return None
+    start = match.end()
+    if start >= len(html_text) or html_text[start] not in "[{":
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(html_text)):
+        char = html_text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(html_text[start:index + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _embed_comments(html_text: str) -> list:
+    """Collect preview comments embedded in an Instagram embed page."""
+    found: list = []
+    for key in ("comments", "edge_media_to_parent_comment",
+                "edge_media_to_comment", "preview_comments"):
+        _collect_comments(_json_value(html_text, key), found, depth=0)
+        if found:
+            break
+    return found
+
+
+def _run_embed(url: str, directory: Path) -> dict:
+    """Fetch the public embed page and download the media URL it exposes."""
+    found = _post_parts(url)
+    if not found:
+        raise ExtractionError("embed: Link enth\u00e4lt keinen Beitrags-Shortcode.")
+    kind, shortcode = found
+    problems: list[str] = []
+    for embed_kind in dict.fromkeys((kind, "p")):
+        embed_url = f"{EMBED_HOST}/{embed_kind}/{shortcode}/embed/captioned/"
+        try:
+            data, _final_url = _http_get(embed_url)
+        except _LoginRedirect:
+            raise ExtractionError(
+                "embed: Instagram leitet zur Anmeldung weiter "
+                f"({EMBED_HOST}/accounts/login/)."
+            )
+        except (HTTPError, URLError, OSError) as error:
+            problems.append(f"{embed_kind}: {error}")
+            continue
+        html_text = data.decode("utf-8", errors="replace")
+        metadata, media_url, _media_kind = _parse_embed(html_text, shortcode, url)
+        embed_comments = _embed_comments(html_text)
+        if embed_comments:
+            metadata["comments"] = embed_comments
+        if not media_url:
+            if "accounts/login" in html_text:
+                raise ExtractionError(
+                    "embed: Der Beitrag ist ohne Anmeldung nicht abrufbar."
+                )
+            problems.append(f"{embed_kind}: kein \u00f6ffentliches Medium gefunden")
+            continue
+        _http_download(media_url, directory / f"001_{shortcode}")
+        return metadata
+    detail = "; ".join(problems) if problems else "Abruf fehlgeschlagen"
+    raise ExtractionError(f"embed: {detail}")
 
 
 def _metadata_value(data: dict, *keys: str) -> str:

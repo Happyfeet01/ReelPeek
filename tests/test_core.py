@@ -166,5 +166,227 @@ class CleanupTests(unittest.TestCase):
                          "2025-01-01T00:00:00+00:00")
 
 
+class EmbedFallbackTests(unittest.TestCase):
+    SAMPLE_EMBED = (
+        '<html><head>'
+        '<meta property="og:title" content="Cooles Reel" />'
+        '<meta property="og:description" content="Beschreibung mit #Hashtag" />'
+        '<meta property="og:video:secure_url" content="https://scontent.cdninstagram.com/v/t66.mp4?efg=abc&amp;oe=1" />'
+        '<script>window.__data = {"playable_url":"https:\\/\\/scontent.fra3-1.cdninstagram.com\\/v\\/clip.mp4?token=1",'
+        '"username":"reelpeek_fan","display_url":"https:\\/\\/scontent.fra3-1.cdninstagram.com\\/v\\/img.jpg"};</script>'
+        '</head></html>'
+    )
+
+    def test_variant_url_swaps_path_kind(self):
+        from app.extractor import _variant_url
+        self.assertEqual(
+            _variant_url("https://www.instagram.com/reel/ABC123/"),
+            "https://www.instagram.com/p/ABC123/",
+        )
+        self.assertEqual(
+            _variant_url("https://www.instagram.com/p/ABC123/"),
+            "https://www.instagram.com/reel/ABC123/",
+        )
+
+    def test_variant_url_rejects_non_post_links(self):
+        from app.extractor import _variant_url
+        self.assertIsNone(_variant_url("https://www.instagram.com/someuser/"))
+        self.assertIsNone(_variant_url("https://www.instagram.com/reel/../etc/"))
+
+    def test_cdn_check_only_accepts_instagram_https_hosts(self):
+        from app.extractor import _is_instagram_cdn
+        self.assertTrue(_is_instagram_cdn("https://scontent.cdninstagram.com/v/x.mp4"))
+        self.assertTrue(_is_instagram_cdn("https://scontent.fra3-1.fbcdn.net/v/x.mp4"))
+        self.assertTrue(_is_instagram_cdn("https://www.instagram.com/v/x.mp4"))
+        self.assertFalse(_is_instagram_cdn("https://evil.example.com/x.mp4"))
+        self.assertFalse(_is_instagram_cdn("http://scontent.cdninstagram.com/v/x.mp4"))
+        self.assertFalse(_is_instagram_cdn("https://cdninstagram.com.evil.example.com/x.mp4"))
+
+    def test_parse_embed_prefers_json_video_and_reads_metadata(self):
+        from app.extractor import _parse_embed
+        metadata, media_url, kind = _parse_embed(
+            self.SAMPLE_EMBED, "ABC123", "https://www.instagram.com/reel/ABC123/")
+        self.assertEqual(kind, "video")
+        self.assertEqual(media_url, "https://scontent.fra3-1.cdninstagram.com/v/clip.mp4?token=1")
+        self.assertEqual(metadata["id"], "ABC123")
+        self.assertEqual(metadata["title"], "Cooles Reel")
+        self.assertEqual(metadata["description"], "Beschreibung mit #Hashtag")
+        self.assertEqual(metadata["uploader"], "reelpeek_fan")
+
+    def test_parse_embed_falls_back_to_og_video_and_unescapes_amp(self):
+        from app.extractor import _parse_embed
+        html = '<meta property="og:video" content="https://video.fbcdn.net/v/x.mp4?efg=1&amp;oe=2" />'
+        _metadata, media_url, kind = _parse_embed(html, "ABC123", "u")
+        self.assertEqual(kind, "video")
+        self.assertEqual(media_url, "https://video.fbcdn.net/v/x.mp4?efg=1&oe=2")
+
+    def test_parse_embed_image_fallback(self):
+        from app.extractor import _parse_embed
+        html = '<meta property="og:image" content="https://scontent.cdninstagram.com/v/pic.jpg" />'
+        _metadata, media_url, kind = _parse_embed(html, "ABC123", "u")
+        self.assertEqual((kind, media_url), ("image", "https://scontent.cdninstagram.com/v/pic.jpg"))
+
+    def test_parse_embed_ignores_foreign_media_hosts(self):
+        from app.extractor import _parse_embed
+        html = ('<meta property="og:video" content="https://evil.example.com/x.mp4" />'
+                '<script>{"playable_url":"https://evil.example.com/y.mp4","username":"x"}</script>')
+        _metadata, media_url, kind = _parse_embed(html, "ABC123", "u")
+        self.assertEqual((media_url, kind), ("", ""))
+
+
+class EmbedHttpTests(unittest.TestCase):
+    def _serve(self, handler):
+        import threading
+        from http.server import HTTPServer
+        server = HTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_http_download_detects_type_and_writes_file(self):
+        from http.server import BaseHTTPRequestHandler
+        from app.extractor import _http_download
+        payload = b"\x00\x01\x02" * 512
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = self._serve(Handler)
+        with tempfile.TemporaryDirectory() as directory:
+            target = _http_download(
+                f"http://127.0.0.1:{server.server_port}/media/clip", Path(directory) / "001_ABC123")
+            self.assertEqual(target.suffix, ".mp4")
+            self.assertEqual(target.read_bytes(), payload)
+
+    def test_run_embed_downloads_video_from_embed_page(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest import mock
+        from app.extractor import _run_embed
+        video = b"FAKEMP4" * 100
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.endswith("/embed/captioned/"):
+                    body = (
+                        '<meta property="og:description" content="Capt" />'
+                        f'<script>{{"playable_url":"http://127.0.0.1:{server.server_port}/v/clip.mp4",'
+                        '"username":"tester","comments":[{"text":"Top!","owner":{"username":"fan1"},'
+                        '"created_at":1700000000}]}</script>'
+                    ).encode()
+                    content_type = "text/html"
+                elif self.path == "/v/clip.mp4":
+                    body, content_type = video, "video/mp4"
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = self._serve(Handler)
+        base = f"http://127.0.0.1:{server.server_port}"
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch("app.extractor.EMBED_HOST", base), \
+                    mock.patch("app.extractor._is_instagram_cdn", lambda value: True):
+                metadata = _run_embed("https://www.instagram.com/reel/ABC123/", Path(directory))
+            files = list(Path(directory).iterdir())
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].name, "001_ABC123.mp4")
+            self.assertEqual(files[0].read_bytes(), video)
+            self.assertEqual(metadata["uploader"], "tester")
+            self.assertEqual(metadata["description"], "Capt")
+            from app.extractor import _comments
+            comments = _comments(metadata)
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["author"], "fan1")
+            self.assertEqual(comments[0]["text"], "Top!")
+
+    def test_run_embed_reports_login_redirect(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest import mock
+        from app.extractor import ExtractionError, _run_embed
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{server.server_port}/accounts/login/?next=x")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = self._serve(Handler)
+        base = f"http://127.0.0.1:{server.server_port}"
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch("app.extractor.EMBED_HOST", base):
+                with self.assertRaises(ExtractionError) as context:
+                    _run_embed("https://www.instagram.com/reel/ABC123/", Path(directory))
+            self.assertIn("Anmeldung", str(context.exception))
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+
+class CommentTimestampTests(unittest.TestCase):
+    def test_numeric_comment_timestamp_is_formatted(self):
+        from app.extractor import _comments
+        comments = _comments({"comments": [
+            {"text": "Hallo", "owner": {"username": "u"}, "created_at": 1_700_000_000},
+        ]})
+        self.assertEqual(comments[0]["created_at"], "2023-11-14T22:13:20+00:00")
+
+    def test_ytdlp_info_json_comments_are_parsed(self):
+        from app.extractor import _comments
+        info_json = {
+            "id": "Dfwh9YqxgVG",
+            "description": "Reel-Beschreibung",
+            "comments": [
+                {"author": "fan1", "text": "Top!", "timestamp": 1_700_000_000},
+                {"author": "fan2", "text": "Danke fürs Teilen \\ud83d\\ude4f", "timestamp": 1_700_000_100},
+                {"author": "", "text": "ohne Autor wird ignoriert"},
+            ],
+        }
+        comments = _comments(info_json)
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[0]["author"], "fan1")
+        self.assertEqual(comments[0]["text"], "Top!")
+        self.assertEqual(comments[0]["created_at"], "2023-11-14T22:13:20+00:00")
+
+    def test_embed_page_comments_are_extracted(self):
+        from app.extractor import _embed_comments, _comments
+        html = (
+            '<script>{"x":{"comments":['
+            '{"text":"Erster!","owner":{"username":"fan1"},"created_at":1700000000},'
+            '{"text":"Zweiter","user":{"username":"fan2"},"created_at":1700000100}'
+            ']},"comment_count":2}</script>'
+        )
+        metadata = {"comments": _embed_comments(html)}
+        comments = _comments(metadata)
+        self.assertEqual([c["author"] for c in comments], ["fan1", "fan2"])
+        self.assertEqual(comments[1]["text"], "Zweiter")
+
+    def test_json_value_handles_nested_strings_and_escapes(self):
+        from app.extractor import _json_value
+        html = '{"preview_comments":[{"text":"a \\"b\\" [c]","node":{}}],"other":1}'
+        value = _json_value(html, "preview_comments")
+        self.assertEqual(value[0]["text"], 'a "b" [c]')
+        self.assertIsNone(_json_value(html, "other"))
+        self.assertIsNone(_json_value(html, "missing"))
+
+
 if __name__ == "__main__":
     unittest.main()
