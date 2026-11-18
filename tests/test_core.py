@@ -280,7 +280,8 @@ class EmbedHttpTests(unittest.TestCase):
                     body = (
                         '<meta property="og:description" content="Capt" />'
                         f'<script>{{"playable_url":"http://127.0.0.1:{server.server_port}/v/clip.mp4",'
-                        '"username":"tester"}</script>'
+                        '"username":"tester","comments":[{"text":"Top!","owner":{"username":"fan1"},'
+                        '"created_at":1700000000}]}</script>'
                     ).encode()
                     content_type = "text/html"
                 elif self.path == "/v/clip.mp4":
@@ -310,6 +311,11 @@ class EmbedHttpTests(unittest.TestCase):
             self.assertEqual(files[0].read_bytes(), video)
             self.assertEqual(metadata["uploader"], "tester")
             self.assertEqual(metadata["description"], "Capt")
+            from app.extractor import _comments
+            comments = _comments(metadata)
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["author"], "fan1")
+            self.assertEqual(comments[0]["text"], "Top!")
 
     def test_run_embed_reports_login_redirect(self):
         from http.server import BaseHTTPRequestHandler
@@ -342,6 +348,44 @@ class CommentTimestampTests(unittest.TestCase):
             {"text": "Hallo", "owner": {"username": "u"}, "created_at": 1_700_000_000},
         ]})
         self.assertEqual(comments[0]["created_at"], "2023-11-14T22:13:20+00:00")
+
+    def test_ytdlp_info_json_comments_are_parsed(self):
+        from app.extractor import _comments
+        info_json = {
+            "id": "Dfwh9YqxgVG",
+            "description": "Reel-Beschreibung",
+            "comments": [
+                {"author": "fan1", "text": "Top!", "timestamp": 1_700_000_000},
+                {"author": "fan2", "text": "Danke fürs Teilen \\ud83d\\ude4f", "timestamp": 1_700_000_100},
+                {"author": "", "text": "ohne Autor wird ignoriert"},
+            ],
+        }
+        comments = _comments(info_json)
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[0]["author"], "fan1")
+        self.assertEqual(comments[0]["text"], "Top!")
+        self.assertEqual(comments[0]["created_at"], "2023-11-14T22:13:20+00:00")
+
+    def test_embed_page_comments_are_extracted(self):
+        from app.extractor import _embed_comments, _comments
+        html = (
+            '<script>{"x":{"comments":['
+            '{"text":"Erster!","owner":{"username":"fan1"},"created_at":1700000000},'
+            '{"text":"Zweiter","user":{"username":"fan2"},"created_at":1700000100}'
+            ']},"comment_count":2}</script>'
+        )
+        metadata = {"comments": _embed_comments(html)}
+        comments = _comments(metadata)
+        self.assertEqual([c["author"] for c in comments], ["fan1", "fan2"])
+        self.assertEqual(comments[1]["text"], "Zweiter")
+
+    def test_json_value_handles_nested_strings_and_escapes(self):
+        from app.extractor import _json_value
+        html = '{"preview_comments":[{"text":"a \\"b\\" [c]","node":{}}],"other":1}'
+        value = _json_value(html, "preview_comments")
+        self.assertEqual(value[0]["text"], 'a "b" [c]')
+        self.assertIsNone(_json_value(html, "other"))
+        self.assertIsNone(_json_value(html, "missing"))
 
 
 if __name__ == "__main__":

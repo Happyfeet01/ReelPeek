@@ -28,6 +28,7 @@ CDN_HOST_SUFFIXES = (".instagram.com", ".cdninstagram.com", ".fbcdn.net")
 EMBED_HOST = "https://www.instagram.com"
 EMBED_TIMEOUT = 15
 EMBED_MAX_BYTES = 512 * 1024 * 1024
+EMBED_HTML_MAX_BYTES = 8 * 1024 * 1024
 EMBED_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -150,9 +151,9 @@ def _collect_comments(value: object, found: list, depth: int) -> None:
 def _comments(data: dict) -> list[dict]:
     """Best-effort comment extraction from downloader metadata.
 
-    gallery-dl and yt-dlp do not fetch Instagram comments on their own.
-    When the metadata happens to contain them (for example preview_comments
-    from an authenticated gallery-dl API response), they are surfaced here.
+    yt-dlp is run with --write-comments, so its info JSON carries the
+    public comments Instagram exposes to anonymous requests; the embed
+    fallback contributes preview comments found in the embed page.
     """
     found: list = []
     _collect_comments(data, found, depth=0)
@@ -286,6 +287,7 @@ def _run_ytdlp(url: str, directory: Path) -> dict:
         "--no-progress", "--socket-timeout", "10", "--retries", "0",
         "--extractor-retries", "0", "--fragment-retries", "0",
         "--abort-on-unavailable-fragments", "--write-info-json",
+        "--write-comments",
         "--no-write-playlist-metafiles",
         "--format", "best[vcodec^=avc1]/best[vcodec=h264]/best",
         "--output", str(directory / "%(autonumber)03d_%(id)s.%(ext)s"),
@@ -394,8 +396,8 @@ def _http_get(url: str) -> tuple[bytes, str]:
         final_url = response.geturl()
         if "accounts/login" in final_url:
             raise _LoginRedirect(final_url)
-        data = response.read(EMBED_MAX_BYTES + 1)
-    if len(data) > EMBED_MAX_BYTES:
+        data = response.read(EMBED_HTML_MAX_BYTES + 1)
+    if len(data) > EMBED_HTML_MAX_BYTES:
         raise ExtractionError("embed: HTML-Antwort zu gro\u00df.")
     return data, final_url
 
@@ -434,6 +436,52 @@ def _http_download(url: str, target: Path) -> Path:
     return target
 
 
+def _json_value(html_text: str, key: str) -> object:
+    """Parse the JSON object/array stored under "key" in an HTML-embedded blob."""
+    match = re.search(r'"' + re.escape(key) + r'"\s*:\s*', html_text)
+    if not match:
+        return None
+    start = match.end()
+    if start >= len(html_text) or html_text[start] not in "[{":
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(html_text)):
+        char = html_text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(html_text[start:index + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _embed_comments(html_text: str) -> list:
+    """Collect preview comments embedded in an Instagram embed page."""
+    found: list = []
+    for key in ("comments", "edge_media_to_parent_comment",
+                "edge_media_to_comment", "preview_comments"):
+        _collect_comments(_json_value(html_text, key), found, depth=0)
+        if found:
+            break
+    return found
+
+
 def _run_embed(url: str, directory: Path) -> dict:
     """Fetch the public embed page and download the media URL it exposes."""
     found = _post_parts(url)
@@ -455,6 +503,9 @@ def _run_embed(url: str, directory: Path) -> dict:
             continue
         html_text = data.decode("utf-8", errors="replace")
         metadata, media_url, _media_kind = _parse_embed(html_text, shortcode, url)
+        embed_comments = _embed_comments(html_text)
+        if embed_comments:
+            metadata["comments"] = embed_comments
         if not media_url:
             if "accounts/login" in html_text:
                 raise ExtractionError(
