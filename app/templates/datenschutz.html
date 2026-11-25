@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Datenschutzhinweise · ReelPeek{% endblock %}
+{% block content %}
+<article class="panel"><h1>Datenschutzhinweise</h1>
+<h2>Verantwortlicher und Kontakt</h2>{% include "operator.html" %}
+<h2>Konto und persönliche Sammlung</h2>
+<p>Für die Einladung gibt der Administrator deine E-Mail-Adresse ein. ReelPeek verarbeitet sie für Einladungen, E-Mail-Bestätigung und Anmeldung. Gespeichert werden Kontostatus, ein gesalzener Passwort-Hash und vorübergehend ein Prüfwert für den Bestätigungslink. Der Link gilt 24 Stunden und wird bei der Aktivierung entwertet. Ohne die E-Mail-Adresse kann kein Konto eingerichtet werden.</p>
+<p>Auf deinen Wunsch speichert ReelPeek Beitrags-URLs, heruntergeladene Medien, Vorschaubilder, öffentliche Verfassernamen, Beschreibungen und verfügbare Kommentare. Favoriten, Aufrufstatus und Zeitpunkte gehören zu deinem Konto. Die Daten dienen der Bereitstellung deiner Sammlung (Art. 6 Abs. 1 Buchst. b DSGVO). Einladungen und Zugangsschutz dienen dem berechtigten Interesse des Betreibers, den Nutzerkreis zu verwalten und unberechtigte Zugriffe zu verhindern (Art. 6 Abs. 1 Buchst. f DSGVO).</p>
+<h2>Verbindungen, Sitzung und Empfänger</h2>
+<p>Beim Besuch erhält der Server deine IP-Adresse und die für den Seitenabruf benötigten Verbindungsdaten. Ein technisch erforderliches, signiertes Sitzungscookie schützt Formulare und hält deine Anmeldung aufrecht (§ 25 Abs. 2 Nr. 2 TDDDG). Es gilt bis zu sieben Tage nach der letzten Verwendung. Bei der Abmeldung wird die Sitzung im Browser beendet.</p>
+<p>Der Maildienst verarbeitet die Empfängeradresse und die Bestätigungsmail. Beim Abruf eines Beitrags kontaktiert der ReelPeek-Server Instagram und gegebenenfalls dessen Medienserver. Diese erhalten die angeforderte URL und die IP-Adresse des Servers. Gespeicherte Medien liefert ReelPeek an deinen Browser aus. Der Administrator sieht für die Kontoverwaltung E-Mail-Adresse und Status. Technisch berechtigte Serverbetreiber können auf die gespeicherten Daten zugreifen.</p>
+<h2>Wie lange werden Daten gespeichert?</h2>
+<p>Medien und Vorschaubilder ohne Favoritenmarkierung werden nach {{ days }} Tagen seit dem letzten erfolgreichen Download bei der nächsten Bereinigung entfernt. Eintragsdaten und Verlauf bleiben bis zur Löschung des Eintrags oder Kontos gespeichert. Favorisierte Medien bleiben bis dahin oder bis zum Ablauf der Frist nach Aufheben der Markierung erhalten. Ausstehende Einladungen bleiben bis zur Kontolöschung oder Aktivierung als offene Konten gespeichert. Sperren löscht keine Daten.</p>
+<h2>Hosting, Mailversand, Protokolle und Sicherungen</h2>
+<p class="multiline">{{ PRIVACY_OPERATIONS or 'Die Angaben des Betreibers zu Dienstleistern, Verarbeitungsorten, möglichen Drittlandübermittlungen und Speicherfristen für Protokolle und Sicherungen stehen noch aus.' }}</p>
+<h2>Deine Rechte</h2>
+<p>Unter den gesetzlichen Voraussetzungen kannst du Auskunft, Berichtigung, Löschung, Einschränkung und Datenübertragbarkeit verlangen. Gegen die Verarbeitung aufgrund berechtigter Interessen kannst du aus Gründen deiner besonderen Situation Widerspruch einlegen. Wende dich dafür an den oben genannten Kontakt. Du kannst dich bei einer Datenschutzaufsichtsbehörde beschweren, insbesondere an deinem Wohnort, Arbeitsplatz oder am Ort des mutmaßlichen Verstoßes.</p>
+{% if PRIVACY_AUTHORITY %}<p>{{ PRIVACY_AUTHORITY }}</p>{% endif %}
+</article>
+{% endblock %}

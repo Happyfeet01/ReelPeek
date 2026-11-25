@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Impressum · ReelPeek{% endblock %}
+{% block content %}
+<article class="panel"><h1>Impressum</h1>
+<h2>Anbieter dieser ReelPeek-Instanz</h2>
+{% include "operator.html" %}
+{% if IMPRINT_EXTRA %}<p class="multiline">{{ IMPRINT_EXTRA }}</p>{% endif %}
+</article>
+{% endblock %}

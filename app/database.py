@@ -37,11 +37,19 @@ class Database:
 
     def initialize(self) -> None:
         with self.connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS items (
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("""CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE,
+                state TEXT NOT NULL DEFAULT 'pending', password_hash TEXT,
+                generation INTEGER NOT NULL DEFAULT 0, token_hash TEXT UNIQUE,
+                token_until INTEGER, last_mail INTEGER NOT NULL DEFAULT 0
+            )""")
+            connection.execute("INSERT OR IGNORE INTO accounts(id) VALUES (1)")
+            connection.execute("CREATE TABLE IF NOT EXISTS removed_media (id TEXT PRIMARY KEY)")
+            schema = """CREATE TABLE IF NOT EXISTS items (
                     id TEXT PRIMARY KEY,
-                    source_url TEXT NOT NULL UNIQUE,
+                    owner_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                    source_url TEXT NOT NULL,
                     title TEXT NOT NULL DEFAULT 'Instagram-Beitrag',
                     description TEXT NOT NULL DEFAULT '',
                     uploader TEXT NOT NULL DEFAULT '',
@@ -56,14 +64,10 @@ class Database:
                     created_at TEXT NOT NULL,
                     watched_at TEXT,
                     updated_at TEXT NOT NULL,
-                    downloaded_at TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_items_created_at
-                    ON items(created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_items_inbox
-                    ON items(seen, created_at DESC);
-                """
-            )
+                    downloaded_at TEXT,
+                    UNIQUE(owner_id, source_url)
+                )"""
+            connection.execute(schema)
             # Existing v0.1.0 databases used created_at as the first download date.
             # Add a dedicated timestamp without changing existing records or favorites.
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(items)")}
@@ -73,6 +77,15 @@ class Database:
                 connection.execute(
                     "ALTER TABLE items ADD COLUMN comments_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "owner_id" not in columns:
+                connection.execute("ALTER TABLE items RENAME TO legacy_items")
+                connection.execute(schema)
+                fields = [row["name"] for row in connection.execute("PRAGMA table_info(items)")
+                          if row["name"] != "owner_id"]
+                names = ", ".join(fields)
+                connection.execute(f"INSERT INTO items (owner_id, {names}) SELECT 1, {names} FROM legacy_items")
+                connection.execute("DROP TABLE legacy_items")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_items_owner ON items(owner_id, created_at DESC)")
             connection.execute("""
                 UPDATE items SET downloaded_at = created_at
                 WHERE downloaded_at IS NULL AND download_state IN ('ready', 'expired')
@@ -93,45 +106,45 @@ class Database:
         item["favorite"] = bool(item["favorite"])
         return item
 
-    def create(self, source_url: str) -> dict:
+    def create(self, source_url: str, owner_id: int = 1) -> dict:
         item_id = uuid.uuid4().hex
         now = utc_now()
         with self.connect() as connection:
             connection.execute(
                 """
-                INSERT INTO items (id, source_url, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO items (id, source_url, created_at, updated_at, owner_id)
+                VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner_id, source_url) DO NOTHING
                 """,
-                (item_id, source_url, now, now),
+                (item_id, source_url, now, now, owner_id),
             )
-        return self.get(item_id)  # type: ignore[return-value]
+        return self.get_by_url(source_url, owner_id)  # type: ignore[return-value]
 
-    def get(self, item_id: str) -> dict | None:
+    def get(self, item_id: str, owner_id: int = 1) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM items WHERE id = ?", (item_id,)
+                "SELECT * FROM items WHERE id = ? AND owner_id = ?", (item_id, owner_id)
             ).fetchone()
         return self._item(row)
 
-    def get_by_url(self, source_url: str) -> dict | None:
+    def get_by_url(self, source_url: str, owner_id: int = 1) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM items WHERE source_url = ?", (source_url,)
+                "SELECT * FROM items WHERE source_url = ? AND owner_id = ?", (source_url, owner_id)
             ).fetchone()
         return self._item(row)
 
-    def list(self, view: str = "all", limit: int = 100) -> list[dict]:
+    def list(self, view: str = "all", limit: int = 100, *, owner_id: int = 1) -> list[dict]:
         clauses = {
-            "inbox": "WHERE seen = 0",
-            "favorites": "WHERE favorite = 1",
-            "history": "WHERE seen = 1",
+            "inbox": "AND seen = 0",
+            "favorites": "AND favorite = 1",
+            "history": "AND seen = 1",
             "all": "",
         }
         clause = clauses.get(view, "")
         with self.connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM items {clause} ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+                f"SELECT * FROM items WHERE owner_id = ? {clause} ORDER BY created_at DESC LIMIT ?",
+                (owner_id, limit),
             ).fetchall()
         return [self._item(row) for row in rows if row is not None]  # type: ignore[misc]
 

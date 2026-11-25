@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Hilfe · ReelPeek{% endblock %}
+{% block content %}
+<article class="panel">
+<h1>Hilfe zu ReelPeek</h1>
+<p>Füge die URL eines öffentlichen Instagram-Beitrags oder Reels ein. ReelPeek ruft den Beitrag auf dem Server ab. Private oder von Instagram beschränkte Beiträge können nicht angezeigt werden.</p>
+<h2>Wie bekomme ich Zugang?</h2>
+<p>Der Administrator lädt deine E-Mail-Adresse ein. Öffne den Link innerhalb von 24 Stunden und wähle dein Passwort. Erst dann kannst du dich anmelden. Für einen neuen Link nutze „Bestätigungslink anfordern“ auf der Anmeldeseite.</p>
+<h2>Wer sieht meine Sammlung?</h2>
+<p>Jedes Konto hat eine eigene Inbox, eigene Favoriten und einen eigenen Verlauf. Beim Öffnen eines geladenen Beitrags wandert er aus der Inbox in den Verlauf. Andere Nutzer können denselben Beitrag unabhängig speichern. Der Administrator verwaltet die Konten.</p>
+<h2>Wann verschwinden Videos und Bilder?</h2>
+<p>Nach {{ days }} Tagen seit dem letzten erfolgreichen Download entfernt die nächste Bereinigung Videos, Bilder und Vorschaubilder ohne Favoritenmarkierung. Sie läuft beim Start, beim Öffnen der Übersicht und einmal täglich im laufenden Betrieb. Ansehen verlängert die Frist nicht.</p>
+<p>URL, Beschreibung, gespeicherte Kommentare und Verlauf bleiben erhalten. Über „Erneut abrufen“ kannst du verfügbare Medien wieder laden. Favoriten behalten ihre Medien. Entfernst du den Stern, zählt wieder das ursprüngliche Download-Datum.</p>
+<h2>Was bewirkt Löschen?</h2>
+<p>Wenn du einen Eintrag löschst, werden seine gespeicherten Angaben, Medien und das Vorschaubild aus deiner Sammlung entfernt. Eine Kontosperre verhindert den Zugriff. Löscht der Administrator dein Konto, werden auch deine gesamte Sammlung und deine Favoriten entfernt. Für eine Kontolöschung erreichst du den Betreiber über das <a href="/impressum">Impressum</a>.</p>
+</article>
+{% endblock %}
