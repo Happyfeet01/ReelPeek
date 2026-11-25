@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Konten verwalten</h1>
+<form class="panel stack" method="post" action="/admin/invite">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label for="invite-email">E-Mail-Adresse einladen oder Einladung erneut senden</label>
+<input type="email" id="invite-email" name="email" required>
+<button>Einladung senden</button></form>
+{% for user in users %}
+<section class="panel">
+<h2>{{ user.email }}</h2>
+<p>{{ {'pending':'Bestätigung ausstehend', 'active':'Aktiv', 'disabled':'Gesperrt'}[user.state] }}{% if user.id == 1 %} · Administrator{% endif %}</p>
+{% if user.id != 1 %}
+<form method="post" action="/admin/{{ user.id }}/{{ 'freigeben' if user.state == 'disabled' else 'sperren' }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<button>{{ 'Sperre aufheben' if user.state == 'disabled' else 'Konto sperren' }}</button></form>
+<details><summary>Konto löschen</summary>
+<form class="stack" method="post" action="/admin/{{ user.id }}/loeschen">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Mit allen Einträgen und Favoriten endgültig löschen. Zur Bestätigung die E-Mail-Adresse eingeben.
+<input type="email" name="confirm" required></label><button>Endgültig löschen</button></form></details>
+{% endif %}</section>
+{% endfor %}
+{% endblock %}

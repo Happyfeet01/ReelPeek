@@ -5,12 +5,16 @@
   <div class="hero-icon">▶</div>
   <h1>ReelPeek</h1>
   <p class="muted">Öffentliche Instagram-Beiträge ansehen – ohne Instagram-Konto.</p>
+  {% if notice %}<p role="status">{{ notice }}</p>{% endif %}
   {% if error %}<div class="alert">{{ error }}</div>{% endif %}
   <form method="post" action="/login" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="email">E-Mail-Adresse</label>
+    <input id="email" name="email" type="email" autocomplete="username" required autofocus>
     <label for="password">Passwort</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
     <button class="primary" type="submit">Anmelden</button>
   </form>
+<p><a href="/registrieren">Bestätigungslink anfordern</a></p>
 </section>
 {% endblock %}

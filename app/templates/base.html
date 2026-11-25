@@ -12,7 +12,8 @@
     <a class="brand" href="/" aria-label="ReelPeek Startseite">
       <span class="brand-mark">▶</span> ReelPeek
     </a>
-    {% if request.session.get('authenticated') %}
+    {% if request.state.user %}
+      {% if request.state.user.id == 1 %}<a href="/admin">Konten verwalten</a>{% endif %}
       <form method="post" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="link-button">Abmelden</button>
@@ -20,5 +21,6 @@
     {% endif %}
   </header>
   <main class="container">{% block content %}{% endblock %}</main>
+<footer class="container"><nav aria-label="Service"><a href="/hilfe">Hilfe</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/impressum">Impressum</a></nav></footer>
 </body>
 </html>

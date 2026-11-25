@@ -1,0 +1,3 @@
+<p>{{ OPERATOR_NAME or 'Betreiberangabe ausstehend' }}<br>
+<span class="multiline">{{ OPERATOR_ADDRESS or 'Anschrift ausstehend' }}</span></p>
+<p>E-Mail: {% if OPERATOR_EMAIL %}<a href="mailto:{{ OPERATOR_EMAIL }}">{{ OPERATOR_EMAIL }}</a>{% else %}Kontaktadresse ausstehend{% endif %}</p>
